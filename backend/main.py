@@ -39,9 +39,47 @@ def compute_image_embedding(image: Image.Image):
 
     return image_embedding.cpu().detach().numpy().astype(float).tolist()
 
+#Track event data
+def track_event(user_id: str, event_name: str, properties: dict = {}):
+    supabase.table("events").insert({
+        "user_id": user_id,
+        "event_name": event_name,
+        "properties": properties
+    }).execute()
+
+def get_or_create_user_profile(user_id: str):
+    resp = supabase.table("user_preferences").select("*").eq("user_id", user_id).execute()
+
+    if len(resp.data) == 0:
+        profile = {
+            "user_id": user_id,
+            "preferred_styles": [],
+            "disliked_categories": [],
+            "formality_score": 0.5
+        }
+        supabase.table("user_preferences").insert(profile).execute()
+        return profile
+
+    return resp.data[0]
+
+def update_preferences(user_id, event_name, properties):
+    prefs = supabase.table("user_preferences").select("*").eq("user_id", user_id).single().execute().data
+
+    if event_name == "outfit_skipped":
+        category = properties.get("category")
+        prefs["disliked_categories"].append(category)
+
+    if event_name == "outfit_clicked":
+        prefs["formality_score"] = min(1.0, prefs["formality_score"] + 0.05)
+
+    supabase.table("user_preferences").update(prefs).eq("user_id", user_id).execute()
+
 # Upload into wardrobe endpoint
 @app.post("/upload-to-wardrobe/")
 async def upload_wardrobe(file: UploadFile = File(...), user_id: str = "test_user", category: str = "top"):
+    
+    profile = get_or_create_user_profile(user_id)
+
     image_bytes = await file.read()
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     embedding = compute_image_embedding(image)
@@ -54,10 +92,30 @@ async def upload_wardrobe(file: UploadFile = File(...), user_id: str = "test_use
         "category": category
     }).execute()
     
+    # Track event
+    track_event(
+        user_id,
+        "upload_item",
+        {
+            "category": category,
+            "filename": file.filename
+        }
+    )
+    
     return {"status": "success", "filename": file.filename}
 
 @app.post("/suggest_outfits")
 async def suggest_outfits(prompt: str, user_id: str = "test_user"):
+    
+    profile = get_or_create_user_profile(user_id)
+
+    
+    #Track event
+    track_event(
+        user_id,
+        "request_recommendation",
+        {"prompt": prompt}
+    )
 
     text_input = processor(text=[prompt], return_tensors="pt", padding=True).to(device)
     with torch.no_grad():
@@ -89,3 +147,19 @@ async def suggest_outfits(prompt: str, user_id: str = "test_user"):
     results.sort(key=lambda x: x["score"], reverse=True)
     return {"prompt": prompt, "matches": results[:5]}
 
+@app.post("/feedback")
+async def outfit_feedback(
+    user_id: str,
+    filename: str,
+    action: str,  # "clicked" or "skipped"
+    category: str
+):
+    track_event(
+        user_id,
+        f"outfit_{action}",
+        {"filename": filename, "category": category}
+    )
+
+    update_preferences(user_id, f"outfit_{action}", {"category": category})
+
+    return {"status": "recorded"}
