@@ -1,38 +1,58 @@
 import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
-import { useState } from "react";
-import { Button, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useState, useRef } from "react";
+import { View, StyleSheet, Text, TouchableOpacity, Alert } from "react-native";
 
-export default function Camera() {
+export default function SimpleCamera() {
   const [facing, setFacing] = useState<CameraType>("back");
   const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
 
-  if (!permission) {
-    // Camera permissions are still loading.
-    return <View />;
-  }
+  if (!permission) return <View />; // still loading permissions
 
   if (!permission.granted) {
-    // Camera permissions are not granted yet.
     return (
       <View style={styles.container}>
         <Text style={styles.message}>
           We need your permission to show the camera
         </Text>
-        <Button onPress={requestPermission} title="grant permission" />
+        <TouchableOpacity
+          onPress={requestPermission}
+          style={styles.permissionButton}
+        >
+          <Text style={styles.permissionButtonText}>Grant Permission</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
-  function toggleCameraFacing() {
+  const toggleCameraFacing = () => {
     setFacing((current) => (current === "back" ? "front" : "back"));
-  }
+  };
+
+  const takePicture = async () => {
+    if (!cameraRef.current) return;
+    const photo = await cameraRef.current.takePictureAsync(); // works here
+    Alert.alert(
+      "Photo taken!",
+      "Do you want to use this photo?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Use Photo", onPress: () => console.log(photo.uri) },
+      ],
+      { cancelable: true },
+    );
+  };
 
   return (
     <View style={styles.container}>
-      <CameraView style={styles.camera} facing={facing} />
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity style={styles.button} onPress={toggleCameraFacing}>
-          <Text style={styles.text}>Flip Camera</Text>
+      <CameraView
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        facing={facing}
+      />
+      <View style={styles.controls}>
+        <TouchableOpacity onPress={takePicture} style={styles.snapButton}>
+          <View style={styles.snapCircle} />
         </TouchableOpacity>
       </View>
     </View>
@@ -40,32 +60,42 @@ export default function Camera() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: "center",
-  },
+  container: { flex: 1, backgroundColor: "black" },
   message: {
     textAlign: "center",
-    paddingBottom: 10,
+    color: "white",
+    fontSize: 16,
+    marginBottom: 16,
   },
-  camera: {
-    flex: 1,
+  permissionButton: {
+    backgroundColor: "#fff",
+    padding: 12,
+    borderRadius: 10,
+    alignSelf: "center",
   },
-  buttonContainer: {
+  permissionButtonText: { fontWeight: "bold", fontSize: 16 },
+  controls: {
     position: "absolute",
-    bottom: 64,
-    flexDirection: "row",
-    backgroundColor: "transparent",
+    bottom: 50,
     width: "100%",
-    paddingHorizontal: 64,
-  },
-  button: {
-    flex: 1,
+    flexDirection: "row",
+    justifyContent: "space-around",
     alignItems: "center",
   },
-  text: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "white",
+  snapButton: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    borderWidth: 4,
+    borderColor: "white",
+    justifyContent: "center",
+    alignItems: "center",
   },
+  snapCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "white",
+  },
+  buttonText: { fontWeight: "bold" },
 });
