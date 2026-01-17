@@ -146,10 +146,46 @@ async def suggest_outfits(prompt: str, user_id: str = "test_user"):
             "filename": item["filename"],
             "score": round(percentage, 2)
         })
-    
     # Sort top 5
     results.sort(key=lambda x: x["score"], reverse=True)
-    return {"prompt": prompt, "matches": results[:5]}
+    # Claude & GPT-4o integration for explanations
+    # Fetch recent events
+    events = (
+        supabase.table("events")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+        .data
+    )
+
+    # Fetch user profile
+    profile = get_or_create_user_profile(user_id)
+
+    # Claude: infer preferences
+    style_insights = analyze_user_style(
+        events=events,
+        wardrobe_summary=[item["category"] for item in items]
+    )
+
+    # GPT-4o: explain results
+    explanation = explain_recommendations(
+        prompt=prompt,
+        matches=results[:5],
+        user_profile=style_insights
+    )
+    
+    return {
+    "prompt": prompt,
+    "matches": results[:5],
+    "explanation": explanation,
+    "models_used": {
+        "behavior_analysis": "Anthropic Claude",
+        "explanation": "OpenAI GPT-4o"
+    }
+    }
+
 
 @app.post("/feedback")
 async def outfit_feedback(
