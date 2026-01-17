@@ -1,5 +1,12 @@
 import requests
 import os
+import json
+from PIL import Image
+from transformers import BlipProcessor, BlipForConditionalGeneration
+
+# Initialize globally
+blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to(device)
 
 BACKBOARD_API_KEY = os.getenv("BACKBOARD_API_KEY")
 BACKBOARD_URL = "https://api.backboard.ai/v1/chat/completions"
@@ -47,7 +54,7 @@ def analyze_user_style(events, wardrobe_summary):
         model="anthropic/claude-3-haiku",
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        memory=events
+        memory=[json.loads(json.dumps(e)) for e in events]
     )
     # Attempt to parse JSON safely
     try:
@@ -99,3 +106,33 @@ def explain_recommendations(prompt, matches, user_profile):
     structured.setdefault("top_reason", "")
 
     return structured
+
+def infer_item_style(image: Image.Image):
+    """
+    Infer a clothing item's style from its image using image caption + LLM classification.
+    """
+    # Step 1: Generate image caption
+    inputs = blip_processor(images=image, return_tensors="pt").to(device)
+    out = blip_model.generate(**inputs)
+    caption = blip_processor.decode(out[0], skip_special_tokens=True)
+
+    # Step 2: Use caption in LLM prompt
+    user_prompt = f"""
+    Analyze this clothing item description and classify its style.
+    Description: {caption}
+    """
+
+    raw_response = call_backboard(
+        model="anthropic/claude-3-haiku",
+        system_prompt="You are a fashion AI that classifies clothing items into styles.",
+        user_prompt=user_prompt
+    )
+
+    # Step 3: Parse safely
+    try:
+        structured = json.loads(raw_response)
+        style = structured.get("style", "casual")
+    except json.JSONDecodeError:
+        style = "casual"
+
+    return style
