@@ -8,6 +8,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from PIL import Image
+from supabase_auth import BaseModel
 from transformers import CLIPProcessor, CLIPModel
 import io
 import torch
@@ -16,7 +17,15 @@ import os
 from dotenv import load_dotenv
 from llm import analyze_user_style, explain_recommendations, infer_item_style
 from outfit_curator import generate_outfits, format_outfit_response
+from pydantic import BaseModel
+from typing import List
 
+class RateOutfitRequest(BaseModel):
+    user_id: str
+    outfit_number: int
+    rating: int  # 1-5 stars
+    items: List[str]  # List of item filenames
+    outfit_type: str = "separates"  # "dress" or "separates"
 
 # Load environment variables from .env file
 load_dotenv()
@@ -155,6 +164,143 @@ def apply_profile_weights(matches, user_preferences):
     # Sort by weighted score
     weighted_results.sort(key=lambda x: x["weighted_score"], reverse=True)
     return weighted_results
+
+def update_preferences_from_rating(user_id: str, rating: int, outfit_items: list):
+    """
+    Update user preferences based on outfit ratings.
+    Learns what styles and combinations the user likes.
+    
+    Args:
+        user_id: User identifier
+        rating: Rating from 1-5
+        outfit_items: List of items in the rated outfit
+    """
+    # Get current preferences
+    prefs = supabase.table("user_preferences").select("*").eq("user_id", user_id).single().execute().data
+    
+    # Extract styles from the outfit items
+    outfit_styles = []
+    outfit_categories = []
+    total_formality = 0
+    
+    for item in outfit_items:
+        # Fetch full item details
+        item_data = supabase.table("wardrobe_items").select("*").eq("filename", item).eq("user_id", user_id).single().execute().data
+        
+        if item_data:
+            style = item_data.get("style", "")
+            category = item_data.get("category", "")
+            
+            if style and style != "unknown":
+                outfit_styles.append(style)
+            if category:
+                outfit_categories.append(category)
+            
+            # Get formality for this category
+            formality = prefs.get("category_formality", {}).get(category, 0.5)
+            total_formality += formality
+    
+    avg_formality = total_formality / len(outfit_items) if outfit_items else 0.5
+    
+    # Update based on rating
+    if rating >= 4:  # Positive rating (4-5 stars)
+        # Add liked styles to preferred_styles
+        for style in outfit_styles:
+            if style not in prefs["preferred_styles"]:
+                prefs["preferred_styles"].append(style)
+        
+        # Adjust formality score towards this outfit's formality
+        current_formality = prefs.get("formality_score", 0.5)
+        # Move 10% towards the rated outfit's formality
+        new_formality = current_formality * 0.9 + avg_formality * 0.1
+        prefs["formality_score"] = min(1.0, max(0.0, new_formality))
+        
+    elif rating <= 2:  # Negative rating (1-2 stars)
+        # Add categories to disliked if consistently rated low
+        for category in outfit_categories:
+            # Check if this category has been rated low multiple times
+            low_ratings = supabase.table("events").select("*").eq("user_id", user_id).eq("event_name", "rate_outfit").execute().data
+            
+            category_low_count = 0
+            for event in low_ratings:
+                if event.get("properties", {}).get("rating", 5) <= 2:
+                    event_items = event.get("properties", {}).get("items", [])
+                    event_categories = []
+                    for item_filename in event_items:
+                        item_info = supabase.table("wardrobe_items").select("category").eq("filename", item_filename).eq("user_id", user_id).execute().data
+                        if item_info:
+                            event_categories.extend([i["category"] for i in item_info])
+                    
+                    if category in event_categories:
+                        category_low_count += 1
+            
+            # If rated low 2+ times, add to disliked
+            if category_low_count >= 2 and category not in prefs["disliked_categories"]:
+                prefs["disliked_categories"].append(category)
+    
+    # Save updated preferences
+    supabase.table("user_preferences").update(prefs).eq("user_id", user_id).execute()
+    
+    return prefs
+
+
+def get_outfit_recommendations_with_learning(user_id: str):
+    """
+    Analyze past ratings to improve future recommendations.
+    
+    Returns insights about what the user likes/dislikes.
+    """
+    # Fetch all ratings
+    ratings = (
+        supabase.table("events")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("event_name", "rate_outfit")
+        .execute()
+        .data
+    )
+    
+    if not ratings:
+        return {
+            "total_ratings": 0,
+            "avg_rating": 0,
+            "insights": "No ratings yet - rate some outfits to help us learn your style!"
+        }
+    
+    # Calculate statistics
+    total_ratings = len(ratings)
+    total_score = sum(r.get("properties", {}).get("rating", 0) for r in ratings)
+    avg_rating = total_score / total_ratings if total_ratings > 0 else 0
+    
+    # Find highly rated outfit patterns
+    high_rated = [r for r in ratings if r.get("properties", {}).get("rating", 0) >= 4]
+    low_rated = [r for r in ratings if r.get("properties", {}).get("rating", 0) <= 2]
+    
+    # Analyze which types of outfits are liked
+    liked_outfit_types = {}
+    for rating in high_rated:
+        outfit_type = rating.get("properties", {}).get("outfit_type", "unknown")
+        liked_outfit_types[outfit_type] = liked_outfit_types.get(outfit_type, 0) + 1
+    
+    insights = f"You've rated {total_ratings} outfits with an average of {avg_rating:.1f} stars. "
+    
+    if high_rated:
+        insights += f"You love {len(high_rated)} outfits! "
+        most_liked_type = max(liked_outfit_types.items(), key=lambda x: x[1])[0] if liked_outfit_types else "N/A"
+        insights += f"Your favorite outfit type seems to be: {most_liked_type}. "
+    
+    if low_rated:
+        insights += f"You've disliked {len(low_rated)} outfits - we'll avoid similar combinations."
+    
+    return {
+        "total_ratings": total_ratings,
+        "avg_rating": round(avg_rating, 2),
+        "high_rated_count": len(high_rated),
+        "low_rated_count": len(low_rated),
+        "insights": insights,
+        "favorite_outfit_types": liked_outfit_types
+    }
+
 
 
 # ============================================================================
@@ -302,7 +448,7 @@ async def suggest_outfits(prompt: str, user_id: str = "test_user", num_outfits: 
     # Step 7: Generate AI explanation for the outfit suggestions
     explanation = explain_recommendations(
         prompt=prompt,
-        matches=formatted_outfits,
+        outfits=formatted_outfits,
         user_profile=style_insights
     )
 
@@ -321,47 +467,123 @@ async def suggest_outfits(prompt: str, user_id: str = "test_user", num_outfits: 
 
 
 @app.post("/rate_outfit")
-async def rate_outfit(
-    user_id: str,
-    outfit_number: int,
-    rating: int,  # 1-5 stars
-    items: list  # List of item filenames in the outfit
-):
+async def rate_outfit(request: RateOutfitRequest):
     """
     Let users rate outfit suggestions to improve future recommendations.
     
-    Args:
-        user_id: User identifier
-        outfit_number: Which outfit suggestion (1, 2, or 3)
-        rating: User's rating (1-5 stars)
-        items: List of item filenames in the outfit
+    This is where the AI learns your style preferences!
+    - High ratings (4-5): We learn what styles you love
+    - Low ratings (1-2): We learn what to avoid
     
     Returns:
-        Confirmation message
+        Confirmation with updated preferences
     """
+    # Validate rating
+    if request.rating < 1 or request.rating > 5:
+        return {"error": "Rating must be between 1 and 5 stars"}
+    
+    # Track the rating event
     track_event(
-        user_id,
+        request.user_id,
         "rate_outfit",
         {
-            "outfit_number": outfit_number,
-            "rating": rating,
-            "items": items
+            "outfit_number": request.outfit_number,
+            "rating": request.rating,
+            "items": request.items,
+            "outfit_type": request.outfit_type
         }
     )
     
-    # Update preferences based on rating
-    if rating >= 4:  # Positive feedback
-        profile = supabase.table("user_preferences").select("*").eq("user_id", user_id).single().execute().data
-        
-        # Slightly increase formality preference if high-rated outfit was formal
-        # This is a simple heuristic - could be more sophisticated
-        profile["formality_score"] = min(1.0, profile["formality_score"] + 0.02)
-        
-        supabase.table("user_preferences").update(profile).eq("user_id", user_id).execute()
+    # Update user preferences based on this rating
+    updated_prefs = update_preferences_from_rating(request.user_id, request.rating, request.items)
+    
+    # Get insights from all ratings
+    insights = get_outfit_recommendations_with_learning(request.user_id)
+    
+    response_message = ""
+    if request.rating >= 4:
+        response_message = f"Great! We'll recommend more {request.outfit_type} outfits like this one. "
+    elif request.rating <= 2:
+        response_message = f"Got it! We'll avoid similar combinations in the future. "
+    else:
+        response_message = "Thanks for your feedback! "
     
     return {
         "status": "rating recorded",
-        "message": f"Thanks for rating outfit #{outfit_number}!"
+        "message": response_message,
+        "outfit_number": request.outfit_number,
+        "rating": request.rating,
+        "updated_preferences": {
+            "preferred_styles": updated_prefs.get("preferred_styles", []),
+            "disliked_categories": updated_prefs.get("disliked_categories", []),
+            "formality_score": updated_prefs.get("formality_score", 0.5)
+        },
+        "learning_insights": insights
+    }
+
+@app.get("/my_style_profile/{user_id}")
+async def get_style_profile(user_id: str = "test_user"):
+    """
+    Get a complete view of what the AI has learned about your style.
+    
+    Shows:
+    - Your preferred styles
+    - Categories you dislike
+    - Formality preference
+    - Rating history and patterns
+    """
+    # Get preferences
+    prefs = supabase.table("user_preferences").select("*").eq("user_id", user_id).execute().data
+    
+    if not prefs:
+        return {
+            "error": "No profile found",
+            "message": "Start uploading items and rating outfits to build your style profile!"
+        }
+    
+    profile = prefs[0]
+    
+    # Get rating insights
+    insights = get_outfit_recommendations_with_learning(user_id)
+    
+    # Get wardrobe summary
+    items = supabase.table("wardrobe_items").select("*").eq("user_id", user_id).execute().data
+    
+    category_counts = {}
+    style_counts = {}
+    
+    for item in items:
+        cat = item.get("category", "unknown")
+        style = item.get("style", "unknown")
+        
+        category_counts[cat] = category_counts.get(cat, 0) + 1
+        if style != "unknown":
+            style_counts[style] = style_counts.get(style, 0) + 1
+    
+    return {
+        "user_id": user_id,
+        "style_preferences": {
+            "preferred_styles": profile.get("preferred_styles", []),
+            "disliked_categories": profile.get("disliked_categories", []),
+            "formality_score": profile.get("formality_score", 0.5),
+            "formality_label": (
+                "Very Casual" if profile.get("formality_score", 0.5) < 0.3 else
+                "Casual" if profile.get("formality_score", 0.5) < 0.5 else
+                "Smart Casual" if profile.get("formality_score", 0.5) < 0.7 else
+                "Formal"
+            )
+        },
+        "wardrobe_stats": {
+            "total_items": len(items),
+            "categories": category_counts,
+            "styles": style_counts
+        },
+        "rating_history": insights,
+        "recommendation_tip": (
+            f"Based on your {insights['total_ratings']} ratings, "
+            f"we recommend outfits with a formality level of {profile.get('formality_score', 0.5):.1f}. "
+            f"{insights['insights']}"
+        )
     }
 
 
