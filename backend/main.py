@@ -7,7 +7,11 @@ import io
 import torch
 import torch.nn.functional as F
 import os
+from dotenv import load_dotenv
+from llm import analyze_user_style, explain_recommendations
 
+
+load_dotenv()
 
 app = FastAPI()
 
@@ -19,8 +23,8 @@ app.add_middleware(
 )
 
 #Supabase client set up
-url = "https://hdlublyjsqrsfzsrcocu.supabase.co"
-key = "sb_publishable_OxgcUB5WTh8oMUteqKJIHA_Hqj59R5N"
+url = os.getenv("SUPABASE_URL")
+key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
 #CLIP Setup
