@@ -2,7 +2,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from PIL import Image
-from transformers import AutoModel, CLIPVisionModelWithProjection, CLIPTextModelWithProjection, AutoProcessor
+from transformers import CLIPProcessor, CLIPVisionModelWithProjection, CLIPTextModelWithProjection, CLIPModel
 import io
 import torch
 import torch.nn.functional as F
@@ -10,6 +10,13 @@ import os
 
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 #Supabase client set up
 url = "https://hdlublyjsqrsfzsrcocu.supabase.co"
@@ -19,8 +26,8 @@ supabase: Client = create_client(url, key)
 #CLIP Setup
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-model = AutoModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
+model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
 # compute embedding
 def compute_image_embedding(image: Image.Image):
@@ -62,8 +69,16 @@ async def suggest_outfits(prompt: str, user_id: str = "test_user"):
     for item in items:
         item_embedding = torch.tensor(item["embedding"])
         similarity = F.cosine_similarity(text_embedding, item_embedding, dim=0)
-        results.append({"filename": item["filename"], "score": float(similarity)})
+
+        # convert cosine similarity (-1 to 1) → percentage (0 to 100)
+        percentage = float((similarity + 1) / 2 * 100)
+
+        results.append({
+            "filename": item["filename"],
+            "score": round(percentage, 2)
+        })
     
     # Sort top 5
     results.sort(key=lambda x: x["score"], reverse=True)
     return {"prompt": prompt, "matches": results[:5]}
+
