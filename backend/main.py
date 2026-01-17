@@ -33,8 +33,11 @@ processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 def compute_image_embedding(image: Image.Image):
     inputs = processor(images=image, return_tensors="pt").to(device)
     with torch.no_grad():
-        embedding = model.encode_image(inputs["pixel_values"])
-    return embedding.squeeze(0).cpu().tolist()  # convert to list for Supabase
+        image_features = model.get_image_features(**inputs)
+        image_embedding = image_features.squeeze(0)
+        image_embedding = image_embedding / image_embedding.norm(p=2)  # normalize
+
+    return image_embedding.cpu().detach().numpy().astype(float).tolist()
 
 # Upload into wardrobe endpoint
 @app.post("/upload-to-wardrobe/")
@@ -58,7 +61,10 @@ async def suggest_outfits(prompt: str, user_id: str = "test_user"):
 
     text_input = processor(text=[prompt], return_tensors="pt", padding=True).to(device)
     with torch.no_grad():
-        text_embedding = model.encode_text(text_input["input_ids"]).squeeze(0)
+        text_features = model.get_text_features(**text_input)
+        text_embedding = text_features.squeeze(0)
+        text_embedding = text_embedding / text_embedding.norm(p=2)  # normalize
+        text_embedding = text_embedding.cpu().detach()
     
     # Retrieve embeddings from Supabase
     resp = supabase.table("wardrobe_items").select("*").eq("user_id", user_id).execute()
@@ -68,6 +74,7 @@ async def suggest_outfits(prompt: str, user_id: str = "test_user"):
     results = []
     for item in items:
         item_embedding = torch.tensor(item["embedding"])
+        item_embedding = item_embedding / item_embedding.norm(p=2)  # normalize
         similarity = F.cosine_similarity(text_embedding, item_embedding, dim=0)
 
         # convert cosine similarity (-1 to 1) → percentage (0 to 100)
