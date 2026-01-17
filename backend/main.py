@@ -15,6 +15,7 @@ import torch.nn.functional as F
 import os
 from dotenv import load_dotenv
 from llm import analyze_user_style, explain_recommendations, infer_item_style
+from outfit_curator import generate_outfits, format_outfit_response
 
 
 # Load environment variables from .env file
@@ -208,23 +209,25 @@ async def upload_wardrobe(file: UploadFile = File(...), user_id: str = "test_use
     return {"status": "success", "filename": file.filename}
 
 @app.post("/suggest_outfits")
-async def suggest_outfits(prompt: str, user_id: str = "test_user"):
+async def suggest_outfits(prompt: str, user_id: str = "test_user", num_outfits: int = 3):
     """
-    Suggest outfit items from a user's wardrobe based on a text description.
+    Suggest complete outfit combinations from user's wardrobe based on text description.
     
     Process:
     1. Convert text prompt to CLIP embedding
-    2. Compare against all user's wardrobe item embeddings
-    3. Rank items by cosine similarity score
-    4. Use Claude to analyze user style from past events
-    5. Use GPT-4o to generate personalized explanation
+    2. Fetch all user's wardrobe items
+    3. Analyze user style preferences with Claude
+    4. Generate complete outfit combinations (top + bottom + accessories)
+    5. Score outfits based on compatibility and prompt match
+    6. Use GPT-4o to explain outfit choices
     
     Args:
         prompt: Text description (e.g., "business casual outfit for work")
         user_id: User identifier (default: "test_user")
+        num_outfits: Number of outfit suggestions (default: 3)
     
     Returns:
-        Top 5 matching items with scores and AI-generated explanation
+        Complete outfit combinations with AI-generated explanations
     """
 
     # Log recommendation request
@@ -242,11 +245,17 @@ async def suggest_outfits(prompt: str, user_id: str = "test_user"):
         text_embedding = text_embedding / text_embedding.norm(p=2)  # normalize
         text_embedding = text_embedding.cpu().detach()
         
-    # Step 1b: Fetch all wardrobe items for the user
+    # Step 2: Fetch all wardrobe items for the user
     resp = supabase.table("wardrobe_items").select("*").eq("user_id", user_id).execute()
     items = resp.data
     
-    # Step 1: Fetch recent events
+    if not items:
+        return {
+            "error": "No wardrobe items found",
+            "message": "Please upload some clothing items first!"
+        }
+    
+    # Step 3: Fetch recent events and analyze user style
     events = (
         supabase.table("events")
         .select("*")
@@ -257,49 +266,102 @@ async def suggest_outfits(prompt: str, user_id: str = "test_user"):
         .data
     )
 
-    # Step 2: Analyze user style with Claude
     style_insights = analyze_user_style(
         events=events,
         wardrobe_summary=[item["category"] for item in items]
     )
 
-    # Step 3: Compute similarity scores between text prompt and wardrobe items
-    results = []
+    # Step 4: Get user profile for formality preferences
     profile = get_or_create_user_profile(user_id)
     formality_map = profile.get("category_formality", {})
 
+    # Add formality scores to items
     for item in items:
-        item_embedding = torch.tensor(item["embedding"])
-        item_embedding = item_embedding / item_embedding.norm(p=2)
-        similarity = F.cosine_similarity(text_embedding, item_embedding, dim=0)
-        results.append({
-            "filename": item["filename"],
-            "category": item["category"],
-            "formality": formality_map.get(item["category"], 0.5),
-            "score": float((similarity + 1) / 2 * 100)
-        })
+        item["formality"] = formality_map.get(item["category"], 0.5)
 
-    # Step 4: Apply profile weights (penalize disliked, boost preferred, adjust formality)
-    weighted_results = apply_profile_weights(results, style_insights)
+    # Step 5: Generate complete outfit combinations
+    outfits = generate_outfits(
+        items=items,
+        text_embedding=text_embedding,
+        user_preferences=style_insights,
+        clip_model=model,
+        clip_processor=processor,
+        device=device,
+        num_outfits=num_outfits
+    )
 
-    # Step 5: Take top 5 weighted results
-    top_matches = weighted_results[:5]
+    if not outfits:
+        return {
+            "error": "Could not generate outfits",
+            "message": "Try uploading more diverse clothing items (tops, bottoms, dresses)"
+        }
 
-    # Step 6: Generate explanations using GPT-4o
+    # Step 6: Format outfits for response
+    formatted_outfits = format_outfit_response(outfits)
+
+    # Step 7: Generate AI explanation for the outfit suggestions
     explanation = explain_recommendations(
         prompt=prompt,
-        matches=top_matches,
+        matches=formatted_outfits,
         user_profile=style_insights
     )
 
     return {
         "prompt": prompt,
-        "matches": top_matches,
+        "num_outfits_generated": len(formatted_outfits),
+        "outfits": formatted_outfits,
+        "user_style_profile": style_insights,
         "explanation": explanation,
         "models_used": {
+            "outfit_generation": "CLIP Vision-Language Model",
             "behavior_analysis": "Anthropic Claude",
             "explanation": "OpenAI GPT-4o"
         }
+    }
+
+
+@app.post("/rate_outfit")
+async def rate_outfit(
+    user_id: str,
+    outfit_number: int,
+    rating: int,  # 1-5 stars
+    items: list  # List of item filenames in the outfit
+):
+    """
+    Let users rate outfit suggestions to improve future recommendations.
+    
+    Args:
+        user_id: User identifier
+        outfit_number: Which outfit suggestion (1, 2, or 3)
+        rating: User's rating (1-5 stars)
+        items: List of item filenames in the outfit
+    
+    Returns:
+        Confirmation message
+    """
+    track_event(
+        user_id,
+        "rate_outfit",
+        {
+            "outfit_number": outfit_number,
+            "rating": rating,
+            "items": items
+        }
+    )
+    
+    # Update preferences based on rating
+    if rating >= 4:  # Positive feedback
+        profile = supabase.table("user_preferences").select("*").eq("user_id", user_id).single().execute().data
+        
+        # Slightly increase formality preference if high-rated outfit was formal
+        # This is a simple heuristic - could be more sophisticated
+        profile["formality_score"] = min(1.0, profile["formality_score"] + 0.02)
+        
+        supabase.table("user_preferences").update(profile).eq("user_id", user_id).execute()
+    
+    return {
+        "status": "rating recorded",
+        "message": f"Thanks for rating outfit #{outfit_number}!"
     }
 
 
