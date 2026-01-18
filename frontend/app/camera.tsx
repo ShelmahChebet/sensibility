@@ -7,10 +7,11 @@ import {
   Image,
   SafeAreaView,
   ScrollView,
-  Modal,
 } from "react-native";
 import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
 import { Ionicons } from "@expo/vector-icons";
+import { Link } from "expo-router";
+import { Button } from "react-native-paper";
 
 type WardrobeItem = {
   id: string;
@@ -19,7 +20,7 @@ type WardrobeItem = {
   addedDate: Date;
 };
 
-export default function WardrobeCamera() {
+export default function WardrobeCamera({ navigation }: { navigation: any }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [photo, setPhoto] = useState<string | null>(null);
   const [showCamera, setShowCamera] = useState(true);
@@ -212,17 +213,9 @@ export default function WardrobeCamera() {
             ))}
           </View>
         </View>
-
-        <View style={styles.tipBox}>
-          <Ionicons
-            name="information-circle-outline"
-            size={20}
-            color="#6366f1"
-          />
-          <Text style={styles.tipText}>
-            Adding categories helps us provide better outfit recommendations
-          </Text>
-        </View>
+        <Link href="/wardrobe" style={styles.linkButton}>
+          <Text style={styles.linkText}>Submit</Text>
+        </Link>
       </ScrollView>
 
       {/* Action buttons */}
@@ -243,59 +236,6 @@ export default function WardrobeCamera() {
           <Text style={styles.primaryButtonText}>Add to Wardrobe</Text>
         </TouchableOpacity>
       </View>
-
-      {/* Category Selection Modal */}
-      <Modal
-        visible={showCategoryModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowCategoryModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Categorize Item</Text>
-            <Text style={styles.modalSubtitle}>
-              Select a category for better organization
-            </Text>
-
-            <View style={styles.modalCategories}>
-              {clothingCategories.map((category) => (
-                <TouchableOpacity
-                  key={category.id}
-                  style={[
-                    styles.modalCategoryButton,
-                    selectedCategory === category.id &&
-                      styles.modalCategoryButtonSelected,
-                  ]}
-                  onPress={() => {
-                    setSelectedCategory(category.id);
-                    setShowCategoryModal(false);
-                  }}
-                >
-                  <Ionicons
-                    name={category.icon as any}
-                    size={24}
-                    color={
-                      selectedCategory === category.id ? "#6366f1" : "#666"
-                    }
-                  />
-                  <Text style={styles.modalCategoryText}>{category.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <TouchableOpacity
-              style={styles.skipButton}
-              onPress={() => {
-                setSelectedCategory("uncategorized");
-                setShowCategoryModal(false);
-              }}
-            >
-              <Text style={styles.skipButtonText}>Skip for now</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -464,7 +404,6 @@ const styles = StyleSheet.create({
   photo: {
     width: "100%",
     height: 400,
-    transform: [{ scaleX: -1 }],
   },
   photoOverlay: {
     position: "absolute",
@@ -646,5 +585,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#666",
     fontWeight: "500",
+  },
+  linkContainer: {
+    alignItems: "center", // centers horizontally
+    marginVertical: 20, // space from other elements
+  },
+  linkButton: {
+    backgroundColor: "#6366f1", // nice purple
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    margin: 10,
+    borderRadius: 30,
+    shadowColor: "#6366f1",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  linkText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+    textAlign: "center",
   },
 });
