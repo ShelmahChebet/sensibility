@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, ScrollView, Image, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, RefreshControl } from "react-native";
+import { View, Text, ScrollView, Image, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, RefreshControl, SafeAreaView, Platform } from "react-native";
 import Constants from 'expo-constants';
 
 // Get API URL from app.json extra config or use default
@@ -23,12 +23,6 @@ export default function Wardrobe({ userId = "test_user" }: { userId?: string }) 
 
   const BACKEND_URL = API_URL;
 
-  console.log("=== WARDROBE DEBUG ===");
-  console.log("API_URL:", API_URL);
-  console.log("BACKEND_URL:", BACKEND_URL);
-  console.log("Full URL will be:", `${BACKEND_URL}/wardrobe_items/${userId}`);
-  console.log("====================");
-
   const fetchWardrobe = async () => {
     try {
       console.log(`Fetching wardrobe for user: ${userId}`);
@@ -41,11 +35,6 @@ export default function Wardrobe({ userId = "test_user" }: { userId?: string }) 
       
       const data = await res.json();
       console.log("Received wardrobe data:", data);
-
-      if (Array.isArray(data) && data.length > 0) {
-      console.log("First item image_url:", data[0].image_url);
-      console.log("Sample image URLs:", data.slice(0, 3).map(item => item.image_url));
-     }
 
       if (Array.isArray(data)) {
         setClothes(data);
@@ -117,116 +106,126 @@ export default function Wardrobe({ userId = "test_user" }: { userId?: string }) 
       : clothes.filter(item => item.category === selectedCategory);
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>My Wardrobe</Text>
-      <Text style={styles.subtitle}>{clothes.length} items</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        <Text style={styles.subtitle}>{clothes.length} items</Text>
 
-      {/* Category Filters */}
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false} 
-        style={styles.categoryBar}
-      >
-        {categories.map(cat => (
-          <TouchableOpacity
-            key={cat}
-            style={[
-              styles.categoryButton,
-              selectedCategory === cat && styles.categoryButtonActive,
-            ]}
-            onPress={() => setSelectedCategory(cat)}
-          >
-            <Text
-              style={[
-                styles.categoryText,
-                selectedCategory === cat && styles.categoryTextActive,
-              ]}
-            >
-              {cat}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* Loading State */}
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#4B9CE2" />
-          <Text style={styles.loadingText}>Loading your wardrobe...</Text>
-        </View>
-      ) : error ? (
-        /* Error State */
-        <View style={styles.centerContainer}>
-          <Text style={styles.errorText}>⚠️ {error}</Text>
-          <TouchableOpacity 
-            style={styles.retryButton}
-            onPress={fetchWardrobe}
-          >
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      ) : filteredClothes.length === 0 ? (
-        /* Empty State */
-        <View style={styles.centerContainer}>
-          <Text style={styles.emptyText}>
-            {selectedCategory === "All" 
-              ? "No items in your wardrobe yet.\nStart by uploading some clothes!" 
-              : `No ${selectedCategory} items found.`}
-          </Text>
-        </View>
-      ) : (
-        /* Wardrobe Items Grid */
+        {/* Category Filters */}
         <ScrollView 
-          contentContainerStyle={styles.grid}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
+          horizontal 
+          showsHorizontalScrollIndicator={false} 
+          style={styles.categoryBar}
         >
-          {filteredClothes.map((item, index) => (
-            <View key={`${item.filename}-${index}`} style={styles.card}>
-              {/* Real Image from Supabase Storage */}
-              <Image
-                source={{ uri: item.image_url }}
-                style={styles.image}
-                resizeMode="cover"
-                onError={(e) => {
-                  console.error("Image load error:", e.nativeEvent.error);
-                }}
-              />
-              
-              <View style={styles.cardContent}>
-                <Text style={styles.categoryLabel}>{item.category}</Text>
-                {item.style && item.style !== "unknown" && (
-                  <Text style={styles.styleLabel}>{item.style}</Text>
-                )}
-              </View>
-
-              {/* Delete Button */}
-              <TouchableOpacity
-                style={styles.deleteButton}
-                onPress={() => handleDeleteItem(item.filename)}
+          {categories.map(cat => (
+            <TouchableOpacity
+              key={cat}
+              style={[
+                styles.categoryButton,
+                selectedCategory === cat && styles.categoryButtonActive,
+              ]}
+              onPress={() => setSelectedCategory(cat)}
+            >
+              <Text
+                style={[
+                  styles.categoryText,
+                  selectedCategory === cat && styles.categoryTextActive,
+                ]}
               >
-                <Text style={styles.deleteButtonText}>🗑️</Text>
-              </TouchableOpacity>
-            </View>
+                {cat}
+              </Text>
+            </TouchableOpacity>
           ))}
         </ScrollView>
-      )}
-    </View>
+
+        {/* Loading State */}
+        {loading ? (
+          <View style={styles.centerContainer}>
+            <ActivityIndicator size="large" color="#4B9CE2" />
+            <Text style={styles.loadingText}>Loading your wardrobe...</Text>
+          </View>
+        ) : error ? (
+          /* Error State */
+          <View style={styles.centerContainer}>
+            <Text style={styles.errorText}>⚠️ {error}</Text>
+            <TouchableOpacity 
+              style={styles.retryButton}
+              onPress={fetchWardrobe}
+            >
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : filteredClothes.length === 0 ? (
+          /* Empty State */
+          <View style={styles.centerContainer}>
+            <Text style={styles.emptyText}>
+              {selectedCategory === "All" 
+                ? "No items in your wardrobe yet.\nStart by uploading some clothes!" 
+                : `No ${selectedCategory} items found.`}
+            </Text>
+          </View>
+        ) : (
+          /* Wardrobe Items Grid */
+          <ScrollView 
+            contentContainerStyle={styles.grid}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+          >
+            {filteredClothes.map((item, index) => (
+              <View key={`${item.filename}-${index}`} style={styles.card}>
+                {/* Real Image from Supabase Storage */}
+                {item.image_url ? (
+                  <Image
+                    source={{ uri: item.image_url }}
+                    style={styles.image}
+                    resizeMode="cover"
+                    onError={(e) => {
+                      console.error("Image load error for:", item.filename);
+                      console.error("URL was:", item.image_url);
+                      console.error("Error:", e.nativeEvent.error);
+                    }}
+                  />
+                ) : (
+                  <View style={[styles.image, styles.placeholderContainer]}>
+                    <Text style={styles.placeholderIcon}>📷</Text>
+                    <Text style={styles.placeholderText}>No image</Text>
+                  </View>
+                )}
+                
+                {/* Only show style if it exists and isn't "unknown" */}
+                {item.style && item.style !== "unknown" && (
+                  <View style={styles.styleContainer}>
+                    <View style={styles.styleBackground}>
+                      <Text style={styles.styleLabel}>{item.style}</Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Delete Button */}
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => handleDeleteItem(item.filename)}
+                >
+                  <Text style={styles.deleteButtonText}>×</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
   container: {
     flex: 1,
     padding: 16,
     backgroundColor: "#fff",
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    marginBottom: 4,
-    color: "#333",
   },
   subtitle: {
     fontSize: 14,
@@ -263,7 +262,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    paddingBottom: 16,
+    paddingBottom: 100, // Extra padding to prevent tab bar overlap
   },
   card: {
     width: "48%",
@@ -280,20 +279,37 @@ const styles = StyleSheet.create({
     height: 180,
     backgroundColor: "#e8e8e8",
   },
-  cardContent: {
+  placeholderContainer: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  placeholderIcon: {
+    fontSize: 48,
+    marginBottom: 8,
+  },
+  placeholderText: {
+    fontSize: 12,
+    color: "#999",
+  },
+  styleContainer: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
     padding: 8,
   },
-  categoryLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    textTransform: "capitalize",
+  styleBackground: {
+    backgroundColor: "rgba(255, 255, 255, 0.85)", // Semi-transparent white background
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6,
+    alignSelf: "flex-start",
   },
   styleLabel: {
-    fontSize: 12,
-    color: "#666",
-    marginTop: 2,
+    fontSize: 11,
+    color: "#333",
     fontStyle: "italic",
+    fontWeight: "500",
   },
   deleteButton: {
     position: "absolute",
@@ -312,7 +328,10 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   deleteButtonText: {
-    fontSize: 16,
+    fontSize: 24,
+    color: "#666",
+    fontWeight: "300",
+    lineHeight: 28,
   },
   centerContainer: {
     flex: 1,

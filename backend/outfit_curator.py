@@ -264,7 +264,8 @@ def format_outfit_response(outfits):
                 {
                     "filename": item["filename"],
                     "category": item["category"],
-                    "style": item.get("style", "unknown")
+                    "style": item.get("style", "unknown"),
+                    "image_url": item.get("image_url", "")
                 }
                 for item in outfit["items"]
             ],
