@@ -12,6 +12,7 @@ import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
 import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { Button } from "react-native-paper";
+import Constants from "expo-constants";
 
 type WardrobeItem = {
   id: string;
@@ -29,6 +30,9 @@ export default function WardrobeCamera({ navigation }: { navigation: any }) {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
 
   const cameraRef = useRef<CameraView>(null);
+
+  const API_URL =
+    Constants.expoConfig?.extra?.apiUrl || "http://138.51.75.132:8000";
 
   if (!permission) return <View />;
 
@@ -65,23 +69,42 @@ export default function WardrobeCamera({ navigation }: { navigation: any }) {
     }
   };
 
-  const addToWardrobe = () => {
-    if (!photo) return;
+  const addToWardrobe = async () => {
+    if (!photo || !selectedCategory) return;
 
-    const newItem: WardrobeItem = {
-      id: Date.now().toString(),
-      uri: photo,
-      category: selectedCategory || "Uncategorized",
-      addedDate: new Date(),
-    };
+    try {
+      const formData = new FormData();
 
-    setWardrobeItems((prev) => [...prev, newItem]);
-    resetCamera();
+      formData.append("user_id", "user_test");
+      formData.append("category", selectedCategory);
 
-    // Show success message
-    setTimeout(() => {
-      alert(`Added to ${selectedCategory || "your wardrobe"} successfully!`);
-    }, 100);
+      formData.append("image", {
+        uri: photo,
+        name: "wardrobe.jpg",
+        type: "image/jpeg",
+      } as any);
+
+      const response = await fetch(`${API_URL}/upload-to-wardrobe`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to upload wardrobe item");
+      }
+
+      const data = await response.json();
+      console.log("Backend response:", data);
+
+      resetCamera();
+      alert("Added to wardrobe ✨");
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert("Something went wrong uploading the item.");
+    }
   };
 
   const retakePhoto = () => {
