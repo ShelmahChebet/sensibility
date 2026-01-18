@@ -136,13 +136,6 @@ export default function WardrobeCamera({ navigation }: { navigation: any }) {
 
         {/* Camera controls */}
         <SafeAreaView style={styles.cameraControls}>
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={() => console.log("Navigate back")}
-          >
-            <Ionicons name="close" size={24} color="white" />
-          </TouchableOpacity>
-
           <View style={styles.snapContainer}>
             <TouchableOpacity onPress={takePicture} style={styles.snapButton}>
               <View style={styles.snapCircle} />
@@ -279,6 +272,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "black",
+    marginBottom: 40,
   },
   cameraOverlay: {
     flex: 1,
@@ -331,22 +325,13 @@ const styles = StyleSheet.create({
   },
   cameraControls: {
     position: "absolute",
-    bottom: 0,
-    left: 0,
+    bottom: 45,
+    left: 40,
     right: 0,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingBottom: 40,
-  },
-  closeButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "center",
-    alignItems: "center",
   },
   snapContainer: {
     flex: 1,
