@@ -14,6 +14,8 @@ export default function RootLayout() {
             iconName = focused ? "camera" : "camera-outline";
           if (route.name === "wardrobe")
             iconName = focused ? "shirt" : "shirt-outline";
+          if (route.name === "outfits")
+            iconName = focused ? "sparkles" : "sparkles-outline";
 
           return <Ionicons name={iconName} size={size} color={color} />;
         },
@@ -30,16 +32,13 @@ export default function RootLayout() {
           fontSize: 12,
           marginBottom: 5,
         },
-        headerShown: true,
+        headerShown: false,
       })}
     >
-      {/* Set custom title for the Home tab */}
-      <Tabs.Screen
-        name="index"
-        options={{ title: "Home" }} // ✅ This changes the top bar text
-      />
+      <Tabs.Screen name="index" options={{ title: "Home" }} />
       <Tabs.Screen name="camera" options={{ title: "Camera" }} />
       <Tabs.Screen name="wardrobe" options={{ title: "Wardrobe" }} />
+      <Tabs.Screen name="outfits" options={{ title: "Outfits" }} />
     </Tabs>
   );
 }
