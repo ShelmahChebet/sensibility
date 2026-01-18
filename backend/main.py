@@ -76,6 +76,62 @@ def compute_image_embedding(image: Image.Image):
     return image_embedding.cpu().detach().numpy().astype(float).tolist()
 
 # ============================================================================
+# Supabase Storage Helper Functions
+# ============================================================================
+
+def upload_image_to_supabase(user_id: str, filename: str, image_bytes: bytes, content_type: str = "image/jpeg"):
+    """
+    Upload an image to Supabase Storage.
+    
+    Args:
+        user_id: User identifier for organizing files
+        filename: Name of the file
+        image_bytes: Raw image bytes
+        content_type: MIME type of the image
+    
+    Returns:
+        Public URL of the uploaded image
+    """
+    # Create unique file path: user_id/filename
+    file_path = f"{user_id}/{filename}"
+    
+    try:
+        # Upload to Supabase storage bucket named 'wardrobe-images'
+        # Make sure this bucket exists in your Supabase project!
+        supabase.storage.from_("wardrobe-images").upload(
+            file_path,
+            image_bytes,
+            {"content-type": content_type, "upsert": "true"}  # upsert=true allows overwriting
+        )
+        
+        # Get public URL for the uploaded image
+        image_url = supabase.storage.from_("wardrobe-images").get_public_url(file_path)
+        
+        return image_url
+    
+    except Exception as e:
+        print(f"Error uploading to Supabase Storage: {e}")
+        # If bucket doesn't exist, provide helpful error message
+        raise Exception(f"Failed to upload image. Make sure 'wardrobe-images' bucket exists in Supabase Storage. Error: {str(e)}")
+
+def delete_image_from_supabase(user_id: str, filename: str):
+    """
+    Delete an image from Supabase Storage.
+    
+    Args:
+        user_id: User identifier
+        filename: Name of the file to delete
+    """
+    file_path = f"{user_id}/{filename}"
+    
+    try:
+        supabase.storage.from_("wardrobe-images").remove([file_path])
+        return True
+    except Exception as e:
+        print(f"Error deleting from Supabase Storage: {e}")
+        return False
+
+# ============================================================================
 # Event Tracking and User Preference Management
 # ============================================================================
 
@@ -312,8 +368,11 @@ async def upload_wardrobe(file: UploadFile = File(...), user_id: str = "test_use
     """
     Upload a clothing item image to a user's wardrobe.
     
-    The image is processed to create a CLIP embedding, which is stored alongside
-    the image metadata for later similarity matching.
+    The image is:
+    1. Uploaded to Supabase Storage for persistent storage
+    2. Processed to create a CLIP embedding for similarity matching
+    3. Analyzed for style using AI
+    4. Stored in the database with metadata and public URL
     
     Args:
         file: Image file to upload (JPEG, PNG, etc.)
@@ -321,20 +380,41 @@ async def upload_wardrobe(file: UploadFile = File(...), user_id: str = "test_use
         category: Clothing category (e.g., 'top', 'bottom', 'dress')
     
     Returns:
-        Status message with filename
+        Status message with filename and image URL
     """
     
+    # Ensure user profile exists
     profile = get_or_create_user_profile(user_id)
 
+    # Read image file
     image_bytes = await file.read()
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    style = infer_item_style(image)
-    embedding = compute_image_embedding(image)
-
     
-    # Store the wardrobe item with its embedding in Supabase
+    # Generate CLIP embedding for similarity matching
+    embedding = compute_image_embedding(image)
+    
+    # Infer style using AI (uses BLIP + GPT-4o-mini)
+    style = infer_item_style(image)
+    
+    # Upload image to Supabase Storage and get public URL
+    try:
+        image_url = upload_image_to_supabase(
+            user_id=user_id,
+            filename=file.filename,
+            image_bytes=image_bytes,
+            content_type=file.content_type or "image/jpeg"
+        )
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "note": "Please create a 'wardrobe-images' bucket in Supabase Storage and make it public"
+        }
+    
+    # Store the wardrobe item with its embedding and image URL in database
     supabase.table("wardrobe_items").insert({
         "filename": file.filename,
+        "image_url": image_url,  # NEW: Store the public URL
         "embedding": embedding,
         "user_id": user_id,
         "category": category,
@@ -348,11 +428,18 @@ async def upload_wardrobe(file: UploadFile = File(...), user_id: str = "test_use
         {
             "category": category,
             "filename": file.filename,
-            "style": style
+            "style": style,
+            "image_url": image_url
         }
     )
     
-    return {"status": "success", "filename": file.filename}
+    return {
+        "status": "success",
+        "filename": file.filename,
+        "image_url": image_url,
+        "style": style,
+        "category": category
+    }
 
 @app.post("/suggest_outfits")
 async def suggest_outfits(prompt: str, user_id: str = "test_user", num_outfits: int = 3):
@@ -622,3 +709,41 @@ async def outfit_feedback(
     update_preferences(user_id, f"outfit_{action}", {"category": category})
 
     return {"status": "recorded"}
+
+@app.get("/wardrobe_items/{user_id}")
+async def get_wardrobe_items(user_id: str):
+    """
+    Get all wardrobe items for a user.
+    Now includes image URLs from Supabase Storage!
+    
+    Args:
+        user_id: User identifier
+        
+    Returns:
+        List of wardrobe items with image URLs, categories, styles, etc.
+    """
+    items = supabase.table("wardrobe_items").select("*").eq("user_id", user_id).execute().data
+    return items
+
+@app.delete("/wardrobe_item/{user_id}/{filename}")
+async def delete_wardrobe_item(user_id: str, filename: str):
+    """
+    Delete a wardrobe item from both database and storage.
+    
+    Args:
+        user_id: User identifier
+        filename: Filename of the item to delete
+        
+    Returns:
+        Status confirmation
+    """
+    # Delete from database
+    supabase.table("wardrobe_items").delete().eq("user_id", user_id).eq("filename", filename).execute()
+    
+    # Delete from storage
+    delete_image_from_supabase(user_id, filename)
+    
+    # Track event
+    track_event(user_id, "delete_item", {"filename": filename})
+    
+    return {"status": "deleted", "filename": filename}
