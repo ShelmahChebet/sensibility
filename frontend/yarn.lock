@@ -5628,6 +5628,13 @@ react-native-camera-kit@^17.0.1:
   resolved "https://registry.npmjs.org/react-native-camera-kit/-/react-native-camera-kit-17.0.1.tgz"
   integrity sha512-DcXfyiNl1yXytDgCxbpny1BbhXnUUpQdzI144v9KhkgSLJo/m7ELC6uuMimQAH6h1ccRW29fQ5KY8BGboHEmww==
 
+react-native-dotenv@^3.4.11:
+  version "3.4.11"
+  resolved "https://registry.npmjs.org/react-native-dotenv/-/react-native-dotenv-3.4.11.tgz"
+  integrity sha512-6vnIE+WHABSeHCaYP6l3O1BOEhWxKH6nHAdV7n/wKn/sciZ64zPPp2NUdEUf1m7g4uuzlLbjgr+6uDt89q2DOg==
+  dependencies:
+    dotenv "^16.4.5"
+
 react-native-fs@^2.20.0:
   version "2.20.0"
   resolved "https://registry.npmjs.org/react-native-fs/-/react-native-fs-2.20.0.tgz"
